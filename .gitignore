@@ -1,0 +1,6 @@
+# Semilla de datos (regenerable con `python scripts/export_tsv.py` desde el .xlsb)
+# El .tsv pesa ~160 MB y excede el límite de 100 MB de GitHub.
+db/seed/btr_data.tsv
+
+# Secretos locales (usar .env.example como plantilla)
+.env

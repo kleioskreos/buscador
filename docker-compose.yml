@@ -1,0 +1,153 @@
+# ============================================================
+# BTR 202604 — Buscador Especializado
+# Stack: React (Nginx) + Go + MySQL 8
+# ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # MySQL 8 — base de datos con indice FULLTEXT
+  # ----------------------------------------------------------
+  mysql:
+    image: mysql:8.0
+    container_name: btr-mysql
+    restart: unless-stopped
+
+    # NOTA: los parametros de FULLTEXT se pasan por linea de comando (no por
+    # db/mysql.cnf) porque MySQL ignora archivos de configuracion "world-writable",
+    # que es lo que ocurre al montarlos desde el host en Windows/Mac.
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb-buffer-pool-size=1G
+      - --max-connections=200
+      - --secure-file-priv=/var/lib/mysql-files
+      - --local-infile=1
+      - --max-allowed-packet=512M
+      - --innodb-flush-log-at-trx-commit=0
+      - --sync-binlog=0
+      - --skip-log-bin
+      # --- Full-Text Search ---
+      - --innodb-ft-min-token-size=2
+      - --innodb-ft-max-token-size=84
+      - --ft-min-word-len=2
+      - --innodb-ft-enable-stopword=OFF
+      # --- Ordenacion ---
+      # Por defecto son 256 KB y MySQL termina volcando a disco al ordenar las
+      # decenas de miles de filas que devuelve una busqueda de prefijo corto.
+      - --sort-buffer-size=8M
+      - --read-buffer-size=1M
+      - --join-buffer-size=1M
+
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-btr_root_2026}
+      MYSQL_DATABASE:      ${MYSQL_DATABASE:-btr_db}
+      MYSQL_USER:          ${MYSQL_USER:-btr_user}
+      MYSQL_PASSWORD:      ${MYSQL_PASSWORD:-btr_pass_2026}
+      TZ: UTC
+
+    ports:
+      - "${MYSQL_PORT:-3307}:3306"
+
+    volumes:
+      # Esquema inicial (se ejecuta solo la primera vez)
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+      # NOTA: no hay que montar db/mysql.cnf. MySQL ignora los .cnf montados
+      # desde Windows/Mac ("World-writable config file ... is ignored"), por lo
+      # que todos los parametros viven aqui, en `command`.
+      # TSV con los 686k registros.
+      # Se monta en /seed (ruta neutra) porque el entrypoint de MySQL intenta
+      # hacer chown sobre /var/lib/mysql-files y falla si el volumen es read-only.
+      # El script load-data.sh lo copia a /var/lib/mysql-files antes de cargar.
+      - ./db/seed:/seed:ro
+      # Datos persistentes
+      - mysql_data:/var/lib/mysql
+
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${MYSQL_ROOT_PASSWORD:-btr_root_2026}"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+    networks:
+      - btr-net
+
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+
+  # ----------------------------------------------------------
+  # Backend Go — API REST
+  # ----------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: btr-backend
+    restart: unless-stopped
+
+    environment:
+      MYSQL_HOST:     mysql
+      MYSQL_PORT:     3306
+      MYSQL_USER:     ${MYSQL_USER:-btr_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-btr_pass_2026}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-btr_db}
+      PORT:           8080
+      TZ:             UTC
+      DEBUG:          "0"
+
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    networks:
+      - btr-net
+
+  # ----------------------------------------------------------
+  # Frontend React — servido por Nginx
+  # ----------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: btr-frontend
+    restart: unless-stopped
+
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+
+    depends_on:
+      backend:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    networks:
+      - btr-net
+
+# ----------------------------------------------------------
+volumes:
+  mysql_data:
+    driver: local
+
+networks:
+  btr-net:
+    driver: bridge
