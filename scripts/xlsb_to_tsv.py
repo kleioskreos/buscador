@@ -47,6 +47,22 @@ import os
 import sys
 import time
 
+# --- Fix PyInstaller --onefile + tkinter ---
+# Cuando se empaqueta con --onefile, PyInstaller descomprime todo en un
+# directorio temporal tipo C:\WINDOWS\TEMP\_MEIxxxxx. Tkinter busca init.tcl
+# en rutas que no existen ahi, y falla con "Can't find a usable init.tcl".
+# Configurar TCL_LIBRARY/TK_LIBRARY al directorio del bundle lo arregla.
+# Si no estamos en un .exe empaquetado, esto no hace nada.
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    _bundle = sys._MEIPASS
+    for _ver in ('8.6', '8.7'):
+        _tcl = os.path.join(_bundle, f'tcl{_ver}')
+        _tk = os.path.join(_bundle, f'tk{_ver}')
+        if os.path.isdir(_tcl):
+            os.environ.setdefault('TCL_LIBRARY', _tcl)
+        if os.path.isdir(_tk):
+            os.environ.setdefault('TK_LIBRARY', _tk)
+
 # Orden canonico que espera el LOAD DATA del backend (backend/db.go) cuando se
 # carga el TSV. 27 columnas. El script las busca por NOMBRE en el header del
 # .xlsb; si alguna no esta, usa la posicion como fallback (con un aviso).
