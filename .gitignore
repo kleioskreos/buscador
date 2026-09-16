@@ -4,3 +4,8 @@ db/seed/btr_data.tsv
 
 # Secretos locales (usar .env.example como plantilla)
 .env
+
+# Copias temporales del archivo base BTR para conversion (no commitear)
+BTR_202604.xlsx
+BTR_202604_local.xlsb
+BTR_202604_clean.xlsx

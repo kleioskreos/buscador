@@ -60,7 +60,17 @@ def main():
     inp, outp = sys.argv[1], sys.argv[2]
 
     with open_workbook(inp) as wb:
-        sh = wb.get_sheet(0)
+        # NOTA: usamos wb.sheets[0] (el nombre) en lugar de get_sheet(0) (el indice).
+        # En archivos .xlsb reales con formato OLE funciona ambos, pero en archivos
+        # donde el workbook viene envuelto en un ZIP no estandar (firma 50 4B 03 04
+        # en lugar de D0 CF 11 E0), get_sheet(0) lanza IndexError aunque la hoja
+        # exista. get_sheet(<nombre>) funciona siempre.
+        if not wb.sheets:
+            sys.stderr.write("ERROR: el archivo no tiene hojas. Posiblemente corrupto.\n")
+            sys.exit(4)
+        sheet_name = wb.sheets[0]
+        sh = wb.get_sheet(sheet_name)
+        sys.stderr.write("hoja activa: %s\n" % sheet_name)
         rows = sh.rows()
 
         # --- Cabecera: mapear cada columna canonica a su indice en el xlsb ---
