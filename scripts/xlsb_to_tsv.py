@@ -74,10 +74,17 @@ COLS = [
     'COD_CARGO', 'CREG_PENS', 'CUSSP',
 ]
 
-# Firma magica OLE Compound File (formato real de .xlsb):
-#   D0 CF 11 E0 A1 B1 1A E1
-# Si los primeros 8 bytes NO coinciden, NO es .xlsb.
-XLSB_MAGIC = b'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1'
+# Firmas magicas aceptables para archivos Excel binarios:
+#   D0 CF 11 E0 A1 B1 1A E1  -> OLE Compound File (formato real de .xlsb)
+#   50 4B 03 04              -> ZIP (xlsx o xlsb "mestizo" con contenido binario adentro)
+# Si los primeros bytes NO son ninguno de estos dos, NO es un archivo Excel
+# valido (puede ser PDF, imagen, CSV renombrado, etc.).
+# Aceptamos ambos porque pyxlsb.open_workbook() puede leer los dos tipos
+# (los .xlsb "mestizos" son comunes cuando se exportan desde otras herramientas).
+XLSB_MAGICS = (
+    b'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1',  # OLE Compound File
+    b'\x50\x4B\x03\x04',                  # ZIP / OOXML / xlsb mestizo
+)
 
 
 def norm(s):
@@ -137,23 +144,29 @@ def convert(inp, out, log=None, progress=None):
     say(f"Entrada: {inp} ({size_mb:.1f} MB)")
     say(f"Salida:  {out}")
 
-    # Validacion de magic bytes
+    # Validacion de magic bytes (permisiva: acepta tanto OLE como ZIP).
+    # OLE es el .xlsb "real" (formato binario legacy de Excel).
+    # ZIP es el formato OOXML moderno (.xlsx) o un .xlsb "mestizo" con contenido
+    # binario adentro (comun en archivos exportados por herramientas externas).
+    # pyxlsb.open_workbook() puede leer ambos. Solo rechazamos archivos que NO
+    # sean ninguno de los dos (PDF, imagen, CSV renombrado, etc.).
     with open(inp, 'rb') as f:
-        magic = f.read(8)
-    if magic != XLSB_MAGIC:
+        magic = f.read(4)
+    if not any(magic.startswith(m) for m in XLSB_MAGICS):
         say("")
-        say(f"ERROR: el archivo NO es un .xlsb real.")
+        say(f"ERROR: el archivo no parece ser un Excel binario valido.")
         say(f"  Magic bytes encontrados: {magic.hex(' ').upper()}")
-        say(f"  Magic bytes esperados:   {XLSB_MAGIC.hex(' ').upper()} (OLE Compound File)")
+        say(f"  Formatos aceptados:")
+        for m in XLSB_MAGICS:
+            say(f"    {m.hex(' ').upper()}  ({'OLE Compound File' if len(m) == 8 else 'ZIP / OOXML'})")
         say("")
         say("Posibles causas:")
-        say("  - Es un .xlsx (formato ZIP/XML) con extension cambiada.")
         say("  - El archivo esta corrupto o es una descarga incompleta.")
-        say("  - Es otro formato (CSV, PDF, etc.) renombrado a .xlsb.")
+        say("  - Es otro formato (PDF, CSV, imagen, etc.) renombrado a .xlsb.")
         say("")
         say("Sugerencias:")
-        say("  - Abrilo con Excel y 'Guardar como > Libro binario de Excel (.xlsb)'.")
-        say("  - O convertilo a .tsv desde Excel (Texto separado por tabuladores).")
+        say("  - Verifica que el archivo abre con Excel.")
+        say("  - Si es .xlsx, renombra a .xlsx (no .xlsb).")
         sys.exit(4)
 
     try:
