@@ -179,11 +179,17 @@ func main() {
 	log.Printf("[server] escuchando en %s", addr)
 	log.Printf("[server] endpoints: /api/search /api/stats /api/distinct /api/health /api/import")
 
+	// NOTA: WriteTimeout arranca a contar desde el primer byte de la request,
+	// no desde que el handler responde. Por eso el endpoint /api/import fallaba
+	// con 502: subir 160 MB + io.Copy a disco + writeJSON ~= 60-70s, justo en
+	// el limite del timeout viejo (60s). Subimos a 30 min para que la subida
+	// de archivos grandes (xlsb/tsv hasta 512 MB) tenga margen. Las demas
+	// rutas (search/stats/distinct/health) responden en ms y no se afectan.
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      mux,
-		ReadTimeout:  300 * time.Second,
-		WriteTimeout: 60 * time.Second,
+		ReadTimeout:  1800 * time.Second, // 30 min (match con WriteTimeout)
+		WriteTimeout: 1800 * time.Second, // 30 min
 		IdleTimeout:  120 * time.Second,
 	}
 
