@@ -10,13 +10,15 @@ BTR_202604.xlsx
 BTR_202604_local.xlsb
 BTR_202604_clean.xlsx
 
-# Builds de PyInstaller (solo se commitea el .exe distribuible final, NO los
+# Builds de PyInstaller (solo se commitea el .zip distribuible final, NO los
 # artefactos intermedios). Regenerar con:
-#   python -m PyInstaller --onefile --console --name xlsb_to_tsv \
-#     --distpath dist scripts/xlsb_to_tsv.py
+#   python -m PyInstaller --onedir --console --name xlsb_to_tsv \
+#     --noconfirm --distpath dist scripts/xlsb_to_tsv.py
+#   Compress-Archive -Path dist/xlsb_to_tsv -DestinationPath dist/xlsb_to_tsv_v1.zip
 build/
 xlsb_to_tsv.spec
 __pycache__/
 *.pyc
 dist/*.exe
-!dist/xlsb_to_tsv.exe
+dist/xlsb_to_tsv/   # carpeta onedir
+

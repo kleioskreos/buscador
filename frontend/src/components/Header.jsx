@@ -3,17 +3,19 @@ import React from 'react'
 const fmtInt = (n) =>
   Number(n || 0).toLocaleString('es-PE')
 
-// URL del convertidor .exe para Windows (generado con PyInstaller desde
-// scripts/xlsb_to_tsv.py). Para re-generarlo:
+// URL del convertidor para Windows. Distribuido como .zip porque PyInstaller
+// --onedir (la unica forma confiable de empaquetar tkinter en Windows) genera
+// una carpeta con DLLs y TCL data. El usuario descarga el .zip, lo extrae y
+// hace doble click en xlsb_to_tsv.exe.
+//
+// Para re-generar:
 //
 //   cd "C:\github\workbuddy\Buscador de apis"
-//   python -m PyInstaller --onefile --console --name xlsb_to_tsv \
+//   python -m PyInstaller --onedir --console --name xlsb_to_tsv \
 //     --noconfirm --distpath dist scripts\xlsb_to_tsv.py
-//
-// Despues subir dist/xlsb_to_tsv.exe al repo (o a un Release de GitHub) y
-// actualizar esta constante.
+//   Compress-Archive -Path dist\xlsb_to_tsv -DestinationPath dist\xlsb_to_tsv_v1.zip
 const CONVERTIDOR_URL =
-  'https://raw.githubusercontent.com/kleioskreos/buscador/main/dist/xlsb_to_tsv.exe'
+  'https://raw.githubusercontent.com/kleioskreos/buscador/main/dist/xlsb_to_tsv_v1.zip'
 
 export default function Header({ stats, loading, onImport }) {
   return (
@@ -22,7 +24,7 @@ export default function Header({ stats, loading, onImport }) {
         <div className="brand">
           <div className="logo">B</div>
           <div className="brand-text">
-            <h1>BTR 202604 · Buscador Especializado</h1>
+            <h1>Buscador Especializado</h1>
             <p>Boleta de Trabajo y Remuneraciones — MINEDU / UGEL</p>
           </div>
         </div>
@@ -31,7 +33,7 @@ export default function Header({ stats, loading, onImport }) {
           className="btn-download"
           href={CONVERTIDOR_URL}
           download
-          title="Descarga el convertidor .xlsb a .tsv para Windows (no requiere Python)"
+          title="Descarga el convertidor .xlsb a .tsv para Windows (zip con el .exe, no requiere Python)"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
