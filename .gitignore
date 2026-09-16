@@ -9,3 +9,14 @@ db/seed/btr_data.tsv
 BTR_202604.xlsx
 BTR_202604_local.xlsb
 BTR_202604_clean.xlsx
+
+# Builds de PyInstaller (solo se commitea el .exe distribuible final, NO los
+# artefactos intermedios). Regenerar con:
+#   python -m PyInstaller --onefile --console --name xlsb_to_tsv \
+#     --distpath dist scripts/xlsb_to_tsv.py
+build/
+xlsb_to_tsv.spec
+__pycache__/
+*.pyc
+dist/*.exe
+!dist/xlsb_to_tsv.exe

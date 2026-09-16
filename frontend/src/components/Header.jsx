@@ -3,6 +3,18 @@ import React from 'react'
 const fmtInt = (n) =>
   Number(n || 0).toLocaleString('es-PE')
 
+// URL del convertidor .exe para Windows (generado con PyInstaller desde
+// scripts/xlsb_to_tsv.py). Para re-generarlo:
+//
+//   cd "C:\github\workbuddy\Buscador de apis"
+//   python -m PyInstaller --onefile --console --name xlsb_to_tsv \
+//     --noconfirm --distpath dist scripts\xlsb_to_tsv.py
+//
+// Despues subir dist/xlsb_to_tsv.exe al repo (o a un Release de GitHub) y
+// actualizar esta constante.
+const CONVERTIDOR_URL =
+  'https://raw.githubusercontent.com/kleioskreos/buscador/main/dist/xlsb_to_tsv.exe'
+
 export default function Header({ stats, loading, onImport }) {
   return (
     <header className="app-header">
@@ -14,6 +26,21 @@ export default function Header({ stats, loading, onImport }) {
             <p>Boleta de Trabajo y Remuneraciones — MINEDU / UGEL</p>
           </div>
         </div>
+
+        <a
+          className="btn-download"
+          href={CONVERTIDOR_URL}
+          download
+          title="Descarga el convertidor .xlsb a .tsv para Windows (no requiere Python)"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          Descargar Convertidor
+        </a>
 
         <div className="header-right">
           <button className="btn-import" onClick={onImport} title="Importar / reemplazar datos">

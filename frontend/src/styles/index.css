@@ -725,6 +725,46 @@ input, select { font-family: inherit; }
 .btn-import svg { flex-shrink: 0; }
 
 /* ============================================================
+   HEADER — boton descargar convertidor (.xlsb -> .tsv)
+   ============================================================ */
+.btn-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: #ffffff;
+  color: #1976d2;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+.btn-download:hover {
+  background: #f3f9ff;
+  color: #0d47a1;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22);
+}
+.btn-download svg { flex-shrink: 0; }
+
+/* Responsive: en pantallas chicas el boton baja de linea */
+@media (max-width: 1100px) {
+  .header-inner {
+    flex-wrap: wrap;
+  }
+  .btn-download {
+    order: 3;
+    flex-basis: 100%;
+    justify-content: center;
+  }
+}
+
+/* ============================================================
    MODAL DE IMPORTACION
    ============================================================ */
 .modal-overlay {
