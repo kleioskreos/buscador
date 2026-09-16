@@ -1,63 +1,55 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-xlsb_to_tsv.py — Convierte el archivo .xlsb del BTR (MINEDU, Peru) a un TSV
-canonico de 27 columnas que el backend Go puede cargar con LOAD DATA INFILE.
-
-Este script es la version para usar EN TU MAQUINA LOCAL (Windows/Mac/Linux)
-para regenerar la semilla antes de hacer import. La version para correr
-adentro del container esta en backend/xlsb_to_tsv.py y se invoca
-automaticamente cuando subis un .xlsb al buscador.
+xlsb_to_tsv.py — Convierte archivos .xlsb (formato binario OLE Compound File)
+a TSV canonico de 27 columnas, pensado para planillas tipo MINEDU/BTR.
 
 USO:
-    # Desde la raiz del proyecto (Windows):
-    python scripts/xlsb_to_tsv.py
 
-    # Pasando paths explicitos:
-    python scripts/xlsb_to_tsv.py ruta/al/archivo.xlsb ruta/al/output.tsv
+  # Doble click sobre el archivo, o sin argumentos: abre una GUI simple
+  python scripts/xlsb_to_tsv.py
 
-    # Con Python 3 desde CUALQUIER directorio (usando forward slashes):
-    python /c/github/workbuddy/Buscador\ de\ apis/scripts/xlsb_to_tsv.py
+  # CLI: pasando el archivo de entrada (y opcionalmente el de salida)
+  python scripts/xlsb_to_tsv.py ruta/al/archivo.xlsb
+  python scripts/xlsb_to_tsv.py ruta/al/archivo.xlsb ruta/al/salida.tsv
 
 DEPENDENCIAS:
     pip install pyxlsb
+    # tkinter viene con Python en Windows y macOS.
+    # En Linux: sudo apt install python3-tk
 
-OUTPUT:
-    Escribe un TSV con la cabecera canonica de 27 columnas (la primera linea)
-    seguida de una fila por cada registro del .xlsb. El archivo esta listo
-    para subir al buscador desde el boton "Importar datos" o para copiar
-    a db/seed/btr_data.tsv (no recomendado: 160 MB > limite de git).
+SALIDA (modo GUI):
+    El TSV se genera en la MISMA CARPETA del archivo .xlsb, con la extension
+    cambiada de .xlsb a .tsv. Ej: planilla.xlsb -> planilla.tsv
+
+SALIDA (modo CLI):
+    Si no se pasa output, se usa la misma convencion (misma carpeta, .tsv).
+    Si se pasa, se usa ese path.
 
 NOTAS TECNICAS:
-    - Por que pyxlsb a veces falla con "IndexError: sheet index out of range"
-      y como lo evitamos: ver bloque mas abajo.
-    - Las 27 columnas canonicas las sacamos del schema MySQL (db/init/01-schema.sql)
-      y del orden usado por el LOAD DATA (backend/db.go).
-    - Mapeamos por NOMBRE de columna (no por posicion), asi si el .xlsb
-      original agrega columnas nuevas o reordena, el script sigue funcionando.
+    - Por que pyxlsb a veces falla con "IndexError: sheet index out of range":
+      ver bloque "EL BUG" mas abajo.
+    - Las 27 columnas canonicas se mapean por NOMBRE (no por posicion), asi si
+      el archivo agrega o reordena columnas, el script sigue funcionando.
+    - Si el archivo no es un .xlsb real (magic bytes incorrectos), el script
+      se niega a procesarlo y da un mensaje claro. Esto evita perder tiempo
+      con archivos renombrados (.xlsx, .csv, .pdf como .xlsb).
 
-HISTORIAL:
-    - 2026-09-15: Creado para evitar el bug "IndexError: sheet index out of
-      range" que aparecia al cargar el archivo BTR_202604.xlsb del 2026 desde
-      el buscador desplegado en Dokploy.
+EL BUG (referencia historica, 2026-09):
+    pyxlsb.open_workbook() puede lanzar "IndexError: sheet index out of range"
+    al llamar wb.get_sheet(0), aunque el archivo tenga sheets. Esto pasa con
+    archivos .xlsb no estandar (envoltorio ZIP raro, etc.). La solucion es
+    acceder por NOMBRE en vez de por indice:
+        sheet_name = wb.sheets[0]      # devuelve el nombre de la primera hoja
+        sh = wb.get_sheet(sheet_name)  # funciona siempre
 """
 import os
 import sys
 import time
 
-try:
-    from pyxlsb import open_workbook
-except ImportError:
-    sys.stderr.write(
-        "ERROR: falta la dependencia 'pyxlsb'.\n"
-        "Instalala con:  pip install pyxlsb\n"
-    )
-    sys.exit(3)
-
-
-# Orden canonico que espera el LOAD DATA del backend Go.
-# DEBE coincidir con `loadCols` en backend/db.go y con el header que genera
-# backend/xlsb_to_tsv.py cuando convierte un .xlsb subido por la UI.
+# Orden canonico que espera el LOAD DATA del backend (backend/db.go) cuando se
+# carga el TSV. 27 columnas. El script las busca por NOMBRE en el header del
+# .xlsb; si alguna no esta, usa la posicion como fallback (con un aviso).
 COLS = [
     'PERPAGO', 'MODULAR', 'SECUENCIAL', 'NDOCUMENTO', 'PATERNO', 'MATERNO',
     'NOMBRES', 'OFICINA', 'DTSERVIDOR', 'NOMBRE_IE', 'DES_CARGO', 'REGLAB',
@@ -66,33 +58,23 @@ COLS = [
     'COD_CARGO', 'CREG_PENS', 'CUSSP',
 ]
 
-# Firma magica de un archivo OLE Compound File (formato real de .xlsb):
+# Firma magica OLE Compound File (formato real de .xlsb):
 #   D0 CF 11 E0 A1 B1 1A E1
-# Si los primeros 8 bytes NO coinciden, el archivo NO es .xlsb (puede ser
-# .xlsx, .csv, .pdf renombrado, etc.) y pyxlsb va a fallar.
+# Si los primeros 8 bytes NO coinciden, NO es .xlsb.
 XLSB_MAGIC = b'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1'
-
-# Paths por defecto pensados para el setup tipico del proyecto en Windows.
-# Se pueden override por linea de comandos.
-DEFAULT_INP = r"C:\github\workbuddy\BTR_202604.xlsb"
-DEFAULT_OUT = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    'db', 'seed', 'btr_data.tsv',
-)
 
 
 def norm(s):
-    """Normaliza un nombre de columna para comparar (sin case ni simbolos)."""
+    """Normaliza un nombre de columna (sin case/simbolos) para comparar."""
     if s is None:
         return ''
     return ''.join(c for c in str(s).upper() if c.isalnum())
 
 
 def sanitize(v):
-    """Deja el valor TSV-seguro (sin tab/CR/LF/backslash, sin espacios dobles)."""
+    """Deja el valor TSV-seguro."""
     if v is None:
         return ''
-    # pyxlsb entrega fechas como datetime; serial Excel como float
     if hasattr(v, 'isoformat'):
         v = v.isoformat(sep=' ')[:10]
     if isinstance(v, float) and v.is_integer():
@@ -104,12 +86,335 @@ def sanitize(v):
     return s
 
 
+def derive_output_path(inp):
+    """Genera el path de salida: misma carpeta que el input, extension .tsv."""
+    base, _ = os.path.splitext(inp)
+    return base + '.tsv'
+
+
+def convert(inp, out, log=None, progress=None):
+    """
+    Convierte inp.xlsb -> out.tsv.
+
+    Args:
+        inp: ruta al archivo .xlsb
+        out: ruta al archivo .tsv de salida
+        log: funcion opcional log(msg) para mostrar mensajes (GUI o CLI)
+        progress: funcion opcional progress(count, elapsed_seconds) llamada
+                  cada 100k filas. None = modo silencioso.
+
+    Returns:
+        dict con 'rows' (cantidad) y 'elapsed' (segundos)
+
+    Raises:
+        SystemExit con codigo 2..6 segun el tipo de error.
+    """
+    def say(msg):
+        if log:
+            log(msg)
+
+    if not os.path.exists(inp):
+        say(f"ERROR: no existe el archivo: {inp}")
+        sys.exit(2)
+
+    size_mb = os.path.getsize(inp) / (1024 * 1024)
+    say(f"Entrada: {inp} ({size_mb:.1f} MB)")
+    say(f"Salida:  {out}")
+
+    # Validacion de magic bytes
+    with open(inp, 'rb') as f:
+        magic = f.read(8)
+    if magic != XLSB_MAGIC:
+        say("")
+        say(f"ERROR: el archivo NO es un .xlsb real.")
+        say(f"  Magic bytes encontrados: {magic.hex(' ').upper()}")
+        say(f"  Magic bytes esperados:   {XLSB_MAGIC.hex(' ').upper()} (OLE Compound File)")
+        say("")
+        say("Posibles causas:")
+        say("  - Es un .xlsx (formato ZIP/XML) con extension cambiada.")
+        say("  - El archivo esta corrupto o es una descarga incompleta.")
+        say("  - Es otro formato (CSV, PDF, etc.) renombrado a .xlsb.")
+        say("")
+        say("Sugerencias:")
+        say("  - Abrilo con Excel y 'Guardar como > Libro binario de Excel (.xlsb)'.")
+        say("  - O convertilo a .tsv desde Excel (Texto separado por tabuladores).")
+        sys.exit(4)
+
+    try:
+        from pyxlsb import open_workbook
+    except ImportError:
+        say("")
+        say("ERROR: falta la dependencia 'pyxlsb'.")
+        say("Instalala con:  pip install pyxlsb")
+        sys.exit(3)
+
+    say("")
+    say("Abriendo workbook...")
+    t0 = time.time()
+    with open_workbook(inp) as wb:
+        if not wb.sheets:
+            say("")
+            say("ERROR: el archivo no tiene hojas (vacio o corrupto).")
+            sys.exit(5)
+
+        # FIX IMPORTANTE: usar wb.get_sheet(NOMBRE) en vez de wb.get_sheet(0).
+        # pyxlsb lanza IndexError con algunos .xlsb no estandar cuando se
+        # accede por indice. Acceder por nombre (devuelto por wb.sheets[0])
+        # funciona siempre.
+        sheet_name = wb.sheets[0]
+        sh = wb.get_sheet(sheet_name)
+        say(f"Hoja activa: {sheet_name!r}")
+        rows = sh.rows()
+
+        try:
+            header_row = next(rows)
+        except StopIteration:
+            say("ERROR: el archivo esta vacio (sin filas).")
+            sys.exit(6)
+
+        hnames = [c.v for c in header_row]
+        say(f"Header: {len(hnames)} columnas detectadas en el .xlsb")
+
+        hmap = {}
+        for i, h in enumerate(hnames):
+            hmap.setdefault(norm(h), i)
+
+        idx = []
+        unmapped = []
+        for col in COLS:
+            j = hmap.get(norm(col))
+            if j is None:
+                j = COLS.index(col)
+                unmapped.append(col)
+            idx.append(j)
+
+        if unmapped:
+            say(
+                f"AVISO: columnas canonicas sin nombre en el header, "
+                f"se uso la posicion como fallback: {', '.join(unmapped)}"
+            )
+
+        os.makedirs(os.path.dirname(out) or '.', exist_ok=True)
+        count = 0
+        with open(out, 'w', encoding='utf-8', newline='') as f:
+            f.write('\t'.join(COLS) + '\n')
+            for row in rows:
+                vals = [c.v for c in row]
+                if not any(v is not None and str(v).strip() != '' for v in vals):
+                    continue
+                cells = []
+                for j in idx:
+                    v = vals[j] if j < len(vals) else ''
+                    cells.append(sanitize(v))
+                f.write('\t'.join(cells) + '\n')
+                count += 1
+                if progress and count % 100000 == 0:
+                    progress(count, time.time() - t0)
+
+    elapsed = time.time() - t0
+    size_out_mb = os.path.getsize(out) / (1024 * 1024)
+    say("")
+    say(f"OK: {count:,} filas -> {out} ({size_out_mb:.1f} MB, {elapsed:.0f}s)")
+    return {'rows': count, 'elapsed': elapsed}
+
+
+# ============================================================
+# Modo CLI
+# ============================================================
+
+def run_cli(args):
+    inp = args[0] if args else None
+    if not inp:
+        print("Uso: python xlsb_to_tsv.py <entrada.xlsb> [salida.tsv]", file=sys.stderr)
+        print("Sin argumentos se abre la GUI. Use --help para mas info.", file=sys.stderr)
+        sys.exit(1)
+
+    out = args[1] if len(args) > 1 else derive_output_path(inp)
+    convert(inp, out, log=lambda m: print(m, file=sys.stderr))
+
+
+# ============================================================
+# Modo GUI (tkinter)
+# ============================================================
+
+def run_gui():
+    try:
+        import tkinter as tk
+        from tkinter import filedialog, messagebox, scrolledtext
+    except ImportError:
+        print(
+            "ERROR: tkinter no esta disponible en este Python.\n"
+            "  - En Windows/macOS viene con Python. Verifica que no estes usando un Python minimal.\n"
+            "  - En Linux: sudo apt install python3-tk\n"
+            "\n"
+            "Como alternativa, usa el modo CLI:\n"
+            "  python scripts/xlsb_to_tsv.py archivo.xlsb\n",
+            file=sys.stderr,
+        )
+        sys.exit(7)
+
+    root = tk.Tk()
+    root.title("Convertir .xlsb a .tsv")
+    root.geometry("640x460")
+    root.minsize(500, 360)
+
+    # Variable mutable para el path seleccionado
+    state = {'inp': None}
+
+    # ---------- Header ----------
+    hdr = tk.Label(
+        root,
+        text="Convertir archivo .xlsb a .tsv",
+        font=("Segoe UI", 14, "bold"),
+    )
+    hdr.pack(pady=(14, 4))
+
+    sub = tk.Label(
+        root,
+        text="Pensado para planillas tipo MINEDU (27 columnas canonicas).",
+        fg="gray",
+        font=("Segoe UI", 9),
+    )
+    sub.pack()
+
+    # ---------- File picker ----------
+    picker_frame = tk.Frame(root)
+    picker_frame.pack(pady=(10, 4), padx=20, fill="x")
+
+    select_btn = tk.Button(
+        picker_frame,
+        text="Seleccionar archivo .xlsb...",
+        command=lambda: on_select(),
+        width=22,
+        height=1,
+    )
+    select_btn.pack(side="left")
+
+    file_label = tk.Label(
+        picker_frame,
+        text="(ningun archivo seleccionado)",
+        fg="gray",
+        anchor="w",
+    )
+    file_label.pack(side="left", padx=(10, 0), fill="x", expand=True)
+
+    path_label = tk.Label(root, text="", fg="gray", font=("Consolas", 8), anchor="w")
+    path_label.pack(padx=20, fill="x")
+
+    # ---------- Convert button ----------
+    convert_btn = tk.Button(
+        root,
+        text="Convertir a .tsv",
+        command=lambda: on_convert(),
+        state="disabled",
+        bg="#1976D2",
+        fg="white",
+        activebackground="#1565C0",
+        activeforeground="white",
+        font=("Segoe UI", 10, "bold"),
+        height=2,
+        cursor="hand2",
+    )
+    convert_btn.pack(pady=(10, 8), padx=20, fill="x")
+
+    # ---------- Log ----------
+    log_label = tk.Label(root, text="Progreso:", anchor="w", font=("Segoe UI", 9, "bold"))
+    log_label.pack(padx=20, anchor="w")
+
+    log_text = scrolledtext.ScrolledText(root, height=12, width=70, font=("Consolas", 9))
+    log_text.pack(padx=20, pady=(2, 14), fill="both", expand=True)
+
+    def log(msg):
+        log_text.insert("end", msg + "\n")
+        log_text.see("end")
+        root.update_idletasks()
+
+    def on_select():
+        path = filedialog.askopenfilename(
+            title="Selecciona el archivo .xlsb",
+            filetypes=[("Excel binario", "*.xlsb"), ("Todos los archivos", "*.*")],
+        )
+        if not path:
+            return
+        state['inp'] = path
+        size_mb = os.path.getsize(path) / (1024 * 1024)
+        file_label.config(
+            text=f"📄  {os.path.basename(path)}  ({size_mb:,.1f} MB)",
+            fg="black",
+        )
+        path_label.config(text=path)
+        convert_btn.config(state="normal")
+        log_text.delete("1.0", "end")
+        log(f"Archivo seleccionado: {path}")
+        log(f"Tamano: {size_mb:.1f} MB")
+        log("")
+        log("Listo para convertir. Click en 'Convertir a .tsv'.")
+
+    def on_convert():
+        inp = state['inp']
+        if not inp:
+            return
+        out = derive_output_path(inp)
+
+        # Bloquear UI mientras corre
+        select_btn.config(state="disabled")
+        convert_btn.config(state="disabled", text="Convirtiendo...")
+        log_text.delete("1.0", "end")
+        log(f"Entrada: {inp}")
+        log(f"Salida:  {out}")
+        log("")
+
+        def progress(count, elapsed):
+            log(f"  {count:,} filas ({elapsed:.0f}s)")
+
+        try:
+            convert(inp, out, log=log, progress=progress)
+        except SystemExit as e:
+            # Errores que el propio convert() lanza con sys.exit(N)
+            log("")
+            log(f"❌ Conversion fallida (codigo {e.code}).")
+            messagebox.showerror(
+                "Conversion fallida",
+                f"La conversion fallo. Revisa los mensajes en el log.\n\n"
+                f"Codigo de error: {e.code}",
+            )
+        except Exception as e:
+            log("")
+            log(f"❌ Error inesperado: {type(e).__name__}: {e}")
+            messagebox.showerror("Error inesperado", f"{type(e).__name__}: {e}")
+        else:
+            log("")
+            log("✅ Conversion exitosa.")
+            log(f"Archivo generado: {out}")
+            # Preguntar si quiere abrir la carpeta
+            if messagebox.askyesno(
+                "Listo",
+                f"Se genero el TSV en:\n{out}\n\n"
+                f"Quieres abrir la carpeta donde quedo?",
+            ):
+                try:
+                    folder = os.path.dirname(out) or '.'
+                    if sys.platform.startswith('win'):
+                        os.startfile(folder)
+                    elif sys.platform == 'darwin':
+                        os.system(f'open "{folder}"')
+                    else:
+                        os.system(f'xdg-open "{folder}"')
+                except Exception as e:
+                    log(f"(No pude abrir la carpeta: {e})")
+        finally:
+            select_btn.config(state="normal")
+            convert_btn.config(state="normal", text="Convertir a .tsv")
+
+    root.mainloop()
+
+
+# ============================================================
+# Entry point
+# ============================================================
+
 def usage():
-    print(__doc__, file=sys.stderr)
-    print(f"Uso:  python {sys.argv[0]} [entrada.xlsb] [salida.tsv]", file=sys.stderr)
-    print(f"Por defecto:", file=sys.stderr)
-    print(f"  entrada: {DEFAULT_INP}", file=sys.stderr)
-    print(f"  salida:  {DEFAULT_OUT}", file=sys.stderr)
+    print(__doc__)
 
 
 def main():
@@ -117,128 +422,11 @@ def main():
         usage()
         sys.exit(0)
 
-    inp = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_INP
-    out = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_OUT
-
-    # --- Validacion de entrada ---
-    if not os.path.exists(inp):
-        sys.stderr.write(f"ERROR: no existe el archivo de entrada: {inp}\n")
-        sys.exit(2)
-
-    size_mb = os.path.getsize(inp) / (1024 * 1024)
-    print(f"[xlsb_to_tsv] entrada: {inp} ({size_mb:.1f} MB)", file=sys.stderr)
-    print(f"[xlsb_to_tsv] salida:  {out}", file=sys.stderr)
-
-    # --- Validacion de magic bytes ---
-    with open(inp, 'rb') as f:
-        magic = f.read(8)
-    if magic != XLSB_MAGIC:
-        sys.stderr.write(
-            f"\nERROR: '{inp}' NO es un .xlsb real.\n"
-            f"  Magic bytes encontrados: {magic.hex(' ').upper()}\n"
-            f"  Magic bytes esperados:   {XLSB_MAGIC.hex(' ').upper()} (OLE Compound File)\n\n"
-            f"Posibles causas:\n"
-            f"  - El archivo es .xlsx (formato ZIP/XML) con extension cambiada.\n"
-            f"  - El archivo esta corrupto o es una descarga incompleta.\n"
-            f"  - El archivo es otro formato (CSV, PDF, etc.) renombrado.\n\n"
-            f"Solucion:\n"
-            f"  - Abrilo con Excel y 'Guardar como > Libro binario de Excel (.xlsb)'.\n"
-            f"  - O convertilo a .tsv directamente desde Excel (Texto separado por tabuladores).\n"
-        )
-        sys.exit(4)
-
-    # --- Conversion ---
-    print(f"[xlsb_to_tsv] abriendo workbook...", file=sys.stderr)
-    t0 = time.time()
-    with open_workbook(inp) as wb:
-        if not wb.sheets:
-            sys.stderr.write(
-                f"\nERROR: '{inp}' no tiene hojas.\n"
-                f"  El archivo es .xlsb valido pero esta vacio.\n"
-            )
-            sys.exit(5)
-
-        # FIX IMPORTANTE: usar wb.get_sheet(NOMBRE) en lugar de wb.get_sheet(0).
-        # pyxlsb lanza "IndexError: sheet index out of range" con algunos archivos
-        # .xlsb (tipicamente los generados por herramientas que envuelven el
-        # workbook en formatos no estandar) cuando se accede por indice.
-        # Acceder por nombre (que es lo que devuelve wb.sheets[0]) funciona
-        # siempre. Esta misma fix esta aplicada en backend/xlsb_to_tsv.py.
-        sheet_name = wb.sheets[0]
-        sh = wb.get_sheet(sheet_name)
-        print(f"[xlsb_to_tsv] hoja activa: {sheet_name!r}", file=sys.stderr)
-
-        rows = sh.rows()
-        try:
-            header_row = next(rows)
-        except StopIteration:
-            sys.stderr.write("ERROR: el archivo esta vacio (sin filas).\n")
-            sys.exit(6)
-
-        hnames = [c.v for c in header_row]
-        print(
-            f"[xlsb_to_tsv] header: {len(hnames)} columnas detectadas en el .xlsb",
-            file=sys.stderr,
-        )
-
-        # Mapa nombre-normalizado -> indice de columna en el .xlsb.
-        # Usamos setdefault para tomar la primera coincidencia si hay nombres duplicados.
-        hmap = {}
-        for i, h in enumerate(hnames):
-            hmap.setdefault(norm(h), i)
-
-        # Para cada columna canonica, resolver su indice en el .xlsb.
-        idx = []
-        unmapped = []
-        for col in COLS:
-            j = hmap.get(norm(col))
-            if j is None:
-                # Fallback posicional SOLO si el nombre no esta en el header.
-                # Esto es un safety net, no el caso normal.
-                j = COLS.index(col)
-                unmapped.append(col)
-            idx.append(j)
-
-        if unmapped:
-            print(
-                f"[xlsb_to_tsv] AVISO: columnas canonicas sin nombre en el header, "
-                f"se uso la posicion como fallback: {', '.join(unmapped)}",
-                file=sys.stderr,
-            )
-
-        # --- Escritura del TSV ---
-        os.makedirs(os.path.dirname(out), exist_ok=True)
-        count = 0
-        with open(out, 'w', encoding='utf-8', newline='') as f:
-            f.write('\t'.join(COLS) + '\n')
-            for row in rows:
-                vals = [c.v for c in row]
-                # Saltar filas totalmente vacias (comunes al final de los .xlsb)
-                if not any(v is not None and str(v).strip() != '' for v in vals):
-                    continue
-                out_cells = []
-                for j in idx:
-                    v = vals[j] if j < len(vals) else ''
-                    out_cells.append(sanitize(v))
-                f.write('\t'.join(out_cells) + '\n')
-                count += 1
-                if count % 100000 == 0:
-                    print(
-                        f"[xlsb_to_tsv] {count:,} filas ({time.time()-t0:.0f}s)",
-                        file=sys.stderr,
-                    )
-
-    elapsed = time.time() - t0
-    size_out_mb = os.path.getsize(out) / (1024 * 1024)
-    print(
-        f"\n[xlsb_to_tsv] OK: {count:,} filas -> {out} ({size_out_mb:.1f} MB, {elapsed:.0f}s)",
-        file=sys.stderr,
-    )
-    print(
-        f"[xlsb_to_tsv] siguiente paso: importar el .tsv desde la UI del buscador "
-        f"(boton 'Importar datos') o copiarlo a db/seed/ para auto-carga al levantar el stack.",
-        file=sys.stderr,
-    )
+    # Sin argumentos -> GUI. Con argumentos -> CLI.
+    if len(sys.argv) > 1:
+        run_cli(sys.argv[1:])
+    else:
+        run_gui()
 
 
 if __name__ == '__main__':
