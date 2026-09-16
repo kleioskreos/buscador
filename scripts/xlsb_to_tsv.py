@@ -288,7 +288,14 @@ def run_gui():
     root.minsize(500, 360)
 
     # Variable mutable para el path seleccionado
-    state = {'inp': None}
+    state = {'inp': None, 'running': False}
+
+    # Cola thread-safe para mensajes del thread de conversion -> thread de UI.
+    # El worker (thread separado) pone mensajes aca, y root.after() los drena
+    # cada 100ms para actualizar el log sin bloquear tkinter.
+    import threading
+    import queue
+    msg_queue = queue.Queue()
 
     # ---------- Header ----------
     hdr = tk.Label(
@@ -356,7 +363,33 @@ def run_gui():
     def log(msg):
         log_text.insert("end", msg + "\n")
         log_text.see("end")
-        root.update_idletasks()
+
+    def queue_log(msg):
+        # Llamado desde el thread de conversion; pone en la cola para que
+        # el thread de UI lo muestre via drain_queue().
+        msg_queue.put(('log', msg))
+
+    def drain_queue():
+        """Drena la cola y actualiza la UI. Llamado desde el thread de UI cada 100ms."""
+        try:
+            while True:
+                kind, payload = msg_queue.get_nowait()
+                if kind == 'log':
+                    log(payload)
+                elif kind == 'progress':
+                    # payload = (count, elapsed)
+                    count, elapsed = payload
+                    # Reemplaza la ultima linea de progreso para no llenar el log
+                    log(f"  {count:,} filas ({elapsed:.0f}s)")
+                elif kind == 'done_ok':
+                    on_done_ok(payload)
+                elif kind == 'done_err':
+                    on_done_err(payload)
+        except queue.Empty:
+            pass
+        finally:
+            if state['running']:
+                root.after(100, drain_queue)
 
     def on_select():
         path = filedialog.askopenfilename(
@@ -383,57 +416,79 @@ def run_gui():
         inp = state['inp']
         if not inp:
             return
+        if state['running']:
+            return
         out = derive_output_path(inp)
 
         # Bloquear UI mientras corre
+        state['running'] = True
         select_btn.config(state="disabled")
         convert_btn.config(state="disabled", text="Convirtiendo...")
         log_text.delete("1.0", "end")
         log(f"Entrada: {inp}")
         log(f"Salida:  {out}")
         log("")
+        log("(Puedes mover la ventana, minimizarla o seguir usando otras apps.")
+        log(" La conversion corre en segundo plano y no congela la UI.)")
+        log("")
 
-        def progress(count, elapsed):
-            log(f"  {count:,} filas ({elapsed:.0f}s)")
+        def worker():
+            """Corre en un thread separado para no bloquear tkinter."""
+            def progress(count, elapsed):
+                msg_queue.put(('progress', (count, elapsed)))
 
-        try:
-            convert(inp, out, log=log, progress=progress)
-        except SystemExit as e:
-            # Errores que el propio convert() lanza con sys.exit(N)
+            try:
+                convert(inp, out, log=queue_log, progress=progress)
+                msg_queue.put(('done_ok', out))
+            except SystemExit as e:
+                msg_queue.put(('done_err', ('exit', e.code)))
+            except Exception as e:
+                msg_queue.put(('done_err', ('exc', f"{type(e).__name__}: {e}")))
+
+        threading.Thread(target=worker, daemon=True).start()
+        # Arrancar el drenado periodico de la cola
+        root.after(100, drain_queue)
+
+    def on_done_ok(out):
+        state['running'] = False
+        log("")
+        log("✅ Conversion exitosa.")
+        log(f"Archivo generado: {out}")
+        select_btn.config(state="normal")
+        convert_btn.config(state="normal", text="Convertir a .tsv")
+        if messagebox.askyesno(
+            "Listo",
+            f"Se genero el TSV en:\n{out}\n\n"
+            f"Quieres abrir la carpeta donde quedo?",
+        ):
+            try:
+                folder = os.path.dirname(out) or '.'
+                if sys.platform.startswith('win'):
+                    os.startfile(folder)
+                elif sys.platform == 'darwin':
+                    os.system(f'open "{folder}"')
+                else:
+                    os.system(f'xdg-open "{folder}"')
+            except Exception as e:
+                log(f"(No pude abrir la carpeta: {e})")
+
+    def on_done_err(payload):
+        state['running'] = False
+        kind, value = payload
+        if kind == 'exit':
             log("")
-            log(f"❌ Conversion fallida (codigo {e.code}).")
+            log(f"❌ Conversion fallida (codigo {value}).")
             messagebox.showerror(
                 "Conversion fallida",
                 f"La conversion fallo. Revisa los mensajes en el log.\n\n"
-                f"Codigo de error: {e.code}",
+                f"Codigo de error: {value}",
             )
-        except Exception as e:
-            log("")
-            log(f"❌ Error inesperado: {type(e).__name__}: {e}")
-            messagebox.showerror("Error inesperado", f"{type(e).__name__}: {e}")
         else:
             log("")
-            log("✅ Conversion exitosa.")
-            log(f"Archivo generado: {out}")
-            # Preguntar si quiere abrir la carpeta
-            if messagebox.askyesno(
-                "Listo",
-                f"Se genero el TSV en:\n{out}\n\n"
-                f"Quieres abrir la carpeta donde quedo?",
-            ):
-                try:
-                    folder = os.path.dirname(out) or '.'
-                    if sys.platform.startswith('win'):
-                        os.startfile(folder)
-                    elif sys.platform == 'darwin':
-                        os.system(f'open "{folder}"')
-                    else:
-                        os.system(f'xdg-open "{folder}"')
-                except Exception as e:
-                    log(f"(No pude abrir la carpeta: {e})")
-        finally:
-            select_btn.config(state="normal")
-            convert_btn.config(state="normal", text="Convertir a .tsv")
+            log(f"❌ Error inesperado: {value}")
+            messagebox.showerror("Error inesperado", value)
+        select_btn.config(state="normal")
+        convert_btn.config(state="normal", text="Convertir a .tsv")
 
     root.mainloop()
 

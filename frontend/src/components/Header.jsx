@@ -15,7 +15,7 @@ const fmtInt = (n) =>
 //     --noconfirm --distpath dist scripts\xlsb_to_tsv.py
 //   Compress-Archive -Path dist\xlsb_to_tsv -DestinationPath dist\xlsb_to_tsv_v1.zip
 const CONVERTIDOR_URL =
-  'https://raw.githubusercontent.com/kleioskreos/buscador/main/dist/xlsb_to_tsv_v2.zip'
+  'https://raw.githubusercontent.com/kleioskreos/buscador/main/dist/xlsb_to_tsv_v3.zip'
 
 export default function Header({ stats, loading, onImport }) {
   return (
